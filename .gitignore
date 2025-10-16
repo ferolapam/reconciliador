@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+*.log
+.DS_Store
+.vscode/
+.pytest_cache/
+.mypy_cache/
+
+# local virtualenv
+.venv
+# env files
+.env
+# PID/local runtime files
+server.pid
+# caches
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info
+
+# virtualenv local
+.venv
+# env files
+.env
+# runtime
+server.pid
+# python/caches
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
