@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -10,10 +10,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
+      # garante imports "from app..." durante testes se necessário
       PYTHONPATH: ${{ github.workspace }}
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python 3.12
@@ -21,46 +22,35 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Show repo structure (debug)
+      - name: Show repo tree (debug)
         run: |
-          echo "=== pwd ==="
-          pwd
-          echo "=== ls -la top ==="
+          echo "PWD: $(pwd)"
+          echo "Tree (top):"
           ls -la
-          echo "=== ls -la app dir ==="
+          echo "Tree (app):"
           ls -la app || true
-          echo "=== show requirements files ==="
-          for f in app/requirements*.txt; do
-            echo "---- $f ----"
-            sed -n '1,200p' "$f" || echo "(not found)"
-          done
+          echo "Show requirements files (if exist):"
+          for f in app/requirements*.txt; do echo "---- $f"; sed -n '1,200p' "$f" || true; done
 
       - name: Upgrade pip & build tools
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
+        run: python -m pip install --upgrade pip setuptools wheel
 
-      - name: Install runtime requirements (explicit, verbose)
+      # Instala dependências de runtime
+      - name: Install runtime requirements
         run: |
           if [ -f app/requirements.txt ]; then
             pip install --no-cache-dir -r app/requirements.txt -v
           else
-            echo "ERROR: app/requirements.txt not found"
+            echo "::error::app/requirements.txt not found"
             ls -la
             exit 2
           fi
 
-      - name: Verify fastapi installed (debug)
+      # Instalar pacote editável localmente (garante imports 'from app.service import app')
+      - name: Install editable package (pip -e .)
         run: |
-          python - <<'PY'
-import importlib, sys
-print('PYTHONPATH=', sys.path)
-print('fastapi present? ', importlib.util.find_spec('fastapi') is not None)
-try:
-    import pkg_resources
-    print('fastapi version:', pkg_resources.get_distribution('fastapi').version)
-except Exception:
-    print('fastapi version: not found or unable to inspect')
-PY
+          # se houver pyproject/setup.cfg, isso instala o pacote local
+          python -m pip install --no-cache-dir -e .
 
       - name: Install dev requirements (tests)
         run: |
@@ -70,10 +60,19 @@ PY
             echo "WARNING: app/requirements-dev.txt not found"
           fi
 
-      - name: Show installed packages (debug)
+      - name: Check fastapi & show packages (debug)
         run: |
+          python - <<'PY'
+import importlib, sys
+print("sys.path:", sys.path[:6])
+print("fastapi spec:", importlib.util.find_spec("fastapi"))
+try:
+    import pkg_resources
+    print("fastapi version:", pkg_resources.get_distribution("fastapi").version)
+except Exception as e:
+    print("fastapi version: not available -", e)
+PY
           pip list --format=columns | sed -n '1,200p'
 
       - name: Run tests
-        run: |
-          pytest -q
+        run: pytest -q
