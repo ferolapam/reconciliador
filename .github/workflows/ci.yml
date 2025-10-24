@@ -1,7 +1,87 @@
+name: ci
+
+on:
+push:
+branches: [main]
+pull_request:
+branches: [main]
+
+jobs:
+build-test:
+runs-on: ubuntu-latest
+env:
+# Garante imports "from app..." durante testes, se necessário
+PYTHONPATH: ${{ github.workspace }}
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+    
+  - name: Setup Python 3.12
+    uses: actions/setup-python@v4
+    with:
+      python-version: '3.12'
+      
+  - name: Show repository tree (debug)
+    run: |
+      echo "PWD: $(pwd)"
+      echo "Tree (top):"
+      ls -la
+      echo "Tree (app):"
+      ls -la app || true
+      echo "Show requirements files (if they exist):"
+      for f in app/requirements*.txt; do echo "---- $f"; sed -n '1,200p' "$f" || true; done
+      
+  - name: Upgrade pip and build tools
+    run: python -m pip install --upgrade pip setuptools wheel
+    
+  # Instala dependências de tempo de execução
+  - name: Install Runtime Requirements
+    run: |
+      if [ -f app/requirements.txt ]; then
+        pip install --no-cache-dir -r app/requirements.txt -v
+      else
+        echo "::error::app/requirements.txt not found"
+        ls -la
+        exit 2
+      fi
+      
+  # Instalar pacote editável localmente (garante imports 'from app.service import app')
+  - name: Install Editable Package (pip -e .)
+    run: |
+      # Se houver pyproject.toml/setup.cfg, isso instala o pacote local
+      python -m pip install --no-cache-dir -e .
+      
+  - name: Install Development Requirements (Tests)
+    run: |
+      if [ -f app/requirements-dev.txt ]; then
+        pip install --no-cache-dir -r app/requirements-dev.txt -v
+      else
+        echo "WARNING: app/requirements-dev.txt not found"
+      fi
+      
+  - name: Check fastapi and show packages (debug)
+    run: |
+      python - <<'PY'
+
+
+import importlib.util
+import sys
+import pkg_resources
+
+print("sys.path:", sys.path[:6])
+print("fastapi spec:", importlib.util.find_spec("fastapi"))
+try:
+print("fastapi version:", pkg_resources.get_distribution("fastapi").version)
+except Exception as e:
+print("fastapi version: not available -", e)
+PY
+pip list --format=columns | sed -n '1,200p'
+
   - name: Run tests
     run: pytest -q
     
-  # Passo Datadog (Transferido do arquivo anterior e corrigido)
+  # Passo Datadog para notificação do status final do CI
   - name: Notify Datadog (US5)
     if: always() 
     env:
@@ -40,4 +120,3 @@
 
       echo "Resposta Datadog:"
       cat /tmp/dd_resp.json || true
-
