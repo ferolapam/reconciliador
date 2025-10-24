@@ -1,78 +1,43 @@
-name: CI
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
+  - name: Run tests
+    run: pytest -q
+    
+  # Passo Datadog (Transferido do arquivo anterior e corrigido)
+  - name: Notify Datadog (US5)
+    if: always() 
     env:
-      # garante imports "from app..." durante testes se necessário
-      PYTHONPATH: ${{ github.workspace }}
+      DD_API_KEY: ${{ secrets.DD_API_KEY }}
+      DD_SITE: ${{ secrets.DD_SITE }}
+      GITHUB_STATUS: ${{ job.status }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+    run: |
+      # 1. Instala o 'jq' (necessário para montar o JSON payload)
+      sudo apt-get update && sudo apt-get install -y jq
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # 2. normaliza o SITE (remove prefixos e sufixos)
+      SITE="${DD_SITE#https://}"
+      SITE="${SITE%/}"
 
-      - name: Setup Python 3.12
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
+      # 3. monta payload
+      STATUS="${GITHUB_STATUS:-success}"
+      ALERT="success"
+      if [ "$STATUS" != "success" ]; then ALERT="error"; fi
 
-      - name: Show repo tree (debug)
-        run: |
-          echo "PWD: $(pwd)"
-          echo "Tree (top):"
-          ls -la
-          echo "Tree (app):"
-          ls -la app || true
-          echo "Show requirements files (if exist):"
-          for f in app/requirements*.txt; do echo "---- $f"; sed -n '1,200p' "$f" || true; done
+      TITLE="CI • ${REPO} • build-test"
+      TEXT="GitHub Actions run #${RUN_ID} finalizado com status: ${STATUS}"
 
-      - name: Upgrade pip & build tools
-        run: python -m pip install --upgrade pip setuptools wheel
+      PAYLOAD=$(jq -n --arg title "$TITLE" --arg text "$TEXT" --arg alert "$ALERT" --arg repo "$REPO" \
+        '{title:$title, text:$text, alert_type:$alert, tags:["source:github","env:ci",("repo:"+$repo)]}')
 
-      # Instala dependências de runtime
-      - name: Install runtime requirements
-        run: |
-          if [ -f app/requirements.txt ]; then
-            pip install --no-cache-dir -r app/requirements.txt -v
-          else
-            echo "::error::app/requirements.txt not found"
-            ls -la
-            exit 2
-          fi
+      echo "Datadog host resolvido: api.${SITE}"
 
-      # Instalar pacote editável localmente (garante imports 'from app.service import app')
-      - name: Install editable package (pip -e .)
-        run: |
-          # se houver pyproject/setup.cfg, isso instala o pacote local
-          python -m pip install --no-cache-dir -e .
+      # 4. envia evento (cabeçalho DD-API-KEY, sem query string)
+      curl -sS -X POST "https://api.${SITE}/api/v1/events" \
+        -H "Content-Type: application/json" \
+        -H "DD-API-KEY: ${DD_API_KEY}" \
+        --data "$PAYLOAD" \
+        -o /tmp/dd_resp.json -w "HTTP_STATUS:%{http_code}\n"
 
-      - name: Install dev requirements (tests)
-        run: |
-          if [ -f app/requirements-dev.txt ]; then
-            pip install --no-cache-dir -r app/requirements-dev.txt -v
-          else
-            echo "WARNING: app/requirements-dev.txt not found"
-          fi
+      echo "Resposta Datadog:"
+      cat /tmp/dd_resp.json || true
 
-      - name: Check fastapi & show packages (debug)
-        run: |
-          python - <<'PY'
-import importlib, sys
-print("sys.path:", sys.path[:6])
-print("fastapi spec:", importlib.util.find_spec("fastapi"))
-try:
-    import pkg_resources
-    print("fastapi version:", pkg_resources.get_distribution("fastapi").version)
-except Exception as e:
-    print("fastapi version: not available -", e)
-PY
-          pip list --format=columns | sed -n '1,200p'
-
-      - name: Run tests
-        run: pytest -q
